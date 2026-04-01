@@ -10,51 +10,59 @@ from io import BytesIO
 st.set_page_config(page_title="Student Predictor", layout="wide")
 
 # =========================
-# CUSTOM UI (PREMIUM LOOK)
+# CUSTOM UI
 # =========================
 st.markdown("""
 <style>
-.main {
-    background-color: #f5f7fa;
-}
+.main { background-color: #f5f7fa; }
 .card {
     padding: 20px;
     border-radius: 15px;
     background-color: white;
     box-shadow: 0px 4px 12px rgba(0,0,0,0.1);
+    text-align: center;
+    color: #333;
 }
 .stButton>button {
     background-color: #4CAF50;
     color: white;
     border-radius: 10px;
+    width: 100%;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# LOAD DATA
+# LOAD & TRAIN (Cached for speed)
 # =========================
-df = pd.read_excel("student_performance.xlsx", sheet_name="Students_Data")
-users = pd.read_excel("student_performance.xlsx", sheet_name="Users")
+@st.cache_data
+def load_and_train():
+    # Note: Ensure these files exist in your directory
+    df = pd.read_excel("student_performance.xlsx", sheet_name="Students_Data")
+    users = pd.read_excel("student_performance.xlsx", sheet_name="Users")
+    
+    # Preprocessing
+    df['Extra_Activities'] = df['Extra_Activities'].map({'Yes': 1, 'No': 0}).fillna(0)
+    df['Final_Result_Num'] = df['Final_Result'].map({'A': 3, 'B': 2, 'C': 1, 'Fail': 0}).fillna(0)
 
-# =========================
-# PREPROCESSING
-# =========================
-df['Extra_Activities'] = df['Extra_Activities'].map({'Yes': 1, 'No': 0})
-df['Final_Result'] = df['Final_Result'].map({'A': 3, 'B': 2, 'C': 1, 'Fail': 0})
+    X = df[['Attendence', 'Study_Hours', 'Internal_Marks', 'Assignment_Score', 'Extra_Activities']]
+    y = df['Final_Result_Num']
 
-X = df[['Attendence', 'Study_Hours', 'Internal_Marks', 'Assignment_Score', 'Extra_Activities']]
-y = df['Final_Result']
+    model = RandomForestClassifier(n_estimators=100)
+    model.fit(X, y)
+    return df, users, model
 
-model = RandomForestClassifier()
-model.fit(X, y)
+try:
+    df, users, model = load_and_train()
+except Exception as e:
+    st.error(f"Error loading data: {e}")
+    st.stop()
 
 # =========================
 # SESSION STATE
 # =========================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
 if "history" not in st.session_state:
     st.session_state.history = []
 
@@ -64,148 +72,89 @@ if "history" not in st.session_state:
 st.sidebar.title("🔐 Login")
 
 if not st.session_state.logged_in:
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
+    username_input = st.sidebar.text_input("Username")
+    password_input = st.sidebar.text_input("Password", type="password")
 
     if st.sidebar.button("Login"):
-        # Clean Excel data
         users['Username'] = users['Username'].astype(str).str.strip()
         users['Password'] = users['Password'].astype(str).str.strip()
-
-        # Clean input
-        username = username.strip()
-        password = password.strip()
-
-        # Match user
-        user = users[
-        (users['Username'] == username) & 
-        (users['Password'] == password)
-        ]
-        if not user.empty:
+        
+        user_match = users[(users['Username'] == username_input.strip()) & 
+                           (users['Password'] == password_input.strip())]
+        
+        if not user_match.empty:
             st.session_state.logged_in = True
-            st.session_state.role = user.iloc[0]['Role']
-            st.success("Login Successful ✅")
+            st.session_state.role = user_match.iloc[0]['Role']
+            st.rerun()
         else:
-            st.error("Invalid Credentials ❌")
-
+            st.sidebar.error("Invalid Credentials ❌")
 else:
     st.sidebar.success(f"Logged in as {st.session_state.role}")
-    
     if st.sidebar.button("Logout"):
         st.session_state.clear()
-        st.experimental_rerun()
+        st.rerun()
 
 # =========================
-# MAIN UI AFTER LOGIN
+# MAIN UI
 # =========================
 if st.session_state.logged_in:
-
     st.title("🎓 Student Performance Dashboard")
 
-    # Dashboard Cards
+    # Metrics
     col1, col2, col3 = st.columns(3)
     col1.markdown(f'<div class="card">📊 Total Students<br><h2>{len(df)}</h2></div>', unsafe_allow_html=True)
-    col2.markdown(f'<div class="card">✅ Pass Count<br><h2>{(df["Final_Result"]>0).sum()}</h2></div>', unsafe_allow_html=True)
-    col3.markdown(f'<div class="card">❌ Fail Count<br><h2>{(df["Final_Result"]==0).sum()}</h2></div>', unsafe_allow_html=True)
+    col2.markdown(f'<div class="card">✅ Pass Count<br><h2>{(df["Final_Result_Num"] > 0).sum()}</h2></div>', unsafe_allow_html=True)
+    col3.markdown(f'<div class="card">❌ Fail Count<br><h2>{(df["Final_Result_Num"] == 0).sum()}</h2></div>', unsafe_allow_html=True)
 
-    # =========================
-    # TEACHER GRAPH VIEW
-    # =========================
-    if st.session_state.role == "teacher":
+    # Analytics for Teachers
+    if st.session_state.role.lower() == "teacher":
         st.subheader("📊 Analytics")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             fig1, ax1 = plt.subplots()
-            ax1.scatter(df['Attendence'], df['Final_Result'])
-            ax1.set_title("Attendance vs Performance")
+            ax1.scatter(df['Attendence'], df['Final_Result_Num'], alpha=0.5)
+            ax1.set_xlabel("Attendance %")
+            ax1.set_ylabel("Grade Level")
             st.pyplot(fig1)
-
-        with col2:
+        with c2:
             fig2, ax2 = plt.subplots()
-            df['Final_Result'].value_counts().plot(kind='bar', ax=ax2)
-            ax2.set_title("Grade Distribution")
+            df['Final_Result'].value_counts().plot(kind='bar', ax=ax2, color='skyblue')
             st.pyplot(fig2)
 
-    # =========================
-    # INPUT FORM
-    # =========================
+    # Prediction Form
     st.subheader("🧠 Predict Student Performance")
+    with st.form("predict_form"):
+        f1, f2 = st.columns(2)
+        with f1:
+            att = st.number_input("Attendance (%)", 0, 100, 75)
+            hrs = st.number_input("Study Hours", 0, 24, 5)
+        with f2:
+            marks = st.number_input("Internal Marks", 0, 100, 50)
+            assign = st.number_input("Assignment Score", 0, 100, 50)
+        
+        ex_act = st.selectbox("Extra Activities", ["Yes", "No"])
+        submitted = st.form_submit_button("Predict 🚀")
 
-    with st.form("form"):
-        col1, col2 = st.columns(2)
-
-        with col1:
-            Attendence = st.number_input("Attendance (%)", 0, 100)
-            Study_Hours = st.number_input("Study Hours", 0, 10)
-
-        with col2:
-            Internal_Marks = st.number_input("Internal Marks", 0, 100)
-            Assignment_Score = st.number_input("Assignment Score", 0, 100)
-
-        extra = st.selectbox("Extra Activities", ["Yes", "No"])
-
-        submit = st.form_submit_button("Predict 🚀")
-
-    # =========================
-    # PREDICTION
-    # =========================
-    if submit:
-        extra_val = 1 if extra == "Yes" else 0
-
-        data = pd.DataFrame([[Attendence, Study_Hours, Internal_Marks, Assignment_Score, Extra_Activities]],
-                            columns=['Attendence', 'Study_Hours', 'Internal_Marks', 'Assignment_Score', 'Extra_Activities'])
-
-        pred = model.predict(data)[0]
-
+    if submitted:
+        ex_val = 1 if ex_act == "Yes" else 0
+        input_data = pd.DataFrame([[att, hrs, marks, assign, ex_val]],
+                                  columns=['Attendence', 'Study_Hours', 'Internal_Marks', 'Assignment_Score', 'Extra_Activities'])
+        
+        res = model.predict(input_data)[0]
         grade_map = {3: 'A', 2: 'B', 1: 'C', 0: 'Fail'}
-        grade = grade_map[pred]
-
-        if pred == 0:
-            risk = "High"
-            suggestion = "Immediate improvement needed"
-        elif pred == 1:
-            risk = "Medium"
-            suggestion = "Increase study hours"
+        res_grade = grade_map[res]
+        
+        # Display Logic
+        if res == 0:
+            st.error(f"Predicted Grade: {res_grade} | High Risk")
         else:
-            risk = "Low"
-            suggestion = "Good performance"
+            st.success(f"Predicted Grade: {res_grade} | Low/Medium Risk")
 
-        # Store history
         st.session_state.history.append({
-            "Attendence": Attendence,
-            "Study_Hours": Study_Hours,
-            "Marks": Internal_Marks,
-            "Assignment": Assignment_Score,
-            "Extra_Activities": Extra_Activities,
-            "Grade": grade,
-            "Risk": risk
+            "Attendance": att, "Hours": hrs, "Marks": marks, "Grade": res_grade
         })
 
-        st.success(f"🎓 Grade: {grade}")
-        st.warning(f"⚠ Risk Level: {risk}")
-        st.info(f"💡 {suggestion}")
-
-    # =========================
-    # HISTORY + DOWNLOAD
-    # =========================
-    st.subheader("📊 Prediction History")
-
+    # History
     if st.session_state.history:
-        history_df = pd.DataFrame(st.session_state.history)
-        st.dataframe(history_df)
-
-        # Convert to Excel
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            history_df.to_excel(writer, index=False)
-
-        st.download_button(
-            "📥 Download Excel",
-            data=output.getvalue(),
-            file_name="prediction_history.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.write("No data yet")
+        st.subheader("📋 History")
+        st.table(pd.DataFrame(st.session_state.history))
