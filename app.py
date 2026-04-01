@@ -68,8 +68,19 @@ if not st.session_state.logged_in:
     password = st.sidebar.text_input("Password", type="password")
 
     if st.sidebar.button("Login"):
-        user = users[(users['Username'] == username) & (users['Password'] == password)]
-        
+        # Clean Excel data
+        users['Username'] = users['Username'].astype(str).str.strip()
+        users['Password'] = users['Password'].astype(str).str.strip()
+
+        # Clean input
+        username = username.strip()
+        password = password.strip()
+
+        # Match user
+        user = users[
+        (users['Username'] == username) & 
+        (users['Password'] == password)
+        ]
         if not user.empty:
             st.session_state.logged_in = True
             st.session_state.role = user.iloc[0]['Role']
